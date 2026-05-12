@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import type {
   ChatCompletionMessageParam,
   ChatCompletionMessage,
+  ChatCompletion,
 } from "openai/resources/chat/completions";
 
 import env from "./config/env.js";
@@ -14,9 +15,14 @@ const client = new OpenAI({
 
 export type ChatMessage = ChatCompletionMessageParam;
 
+export type ModelResponse = {
+  message: ChatCompletionMessage;
+  finishReason: ChatCompletion.Choice["finish_reason"];
+};
+
 export async function callModel(
   messages: ChatMessage[],
-): Promise<ChatCompletionMessage> {
+): Promise<ModelResponse> {
   const response = await client.chat.completions.create({
     model: env.MODEL_NAME,
     messages,
@@ -27,11 +33,14 @@ export async function callModel(
     tool_choice: "auto",
   });
 
-  const message = response.choices[0]?.message;
+  const choice = response.choices[0];
 
-  if (!message) {
-    throw new Error("Model response did not include an assistant message");
+  if (!choice) {
+    throw new Error("Model response did not include a choice");
   }
 
-  return message;
+  return {
+    message: choice.message,
+    finishReason: choice.finish_reason,
+  };
 }

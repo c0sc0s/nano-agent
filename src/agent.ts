@@ -1,8 +1,9 @@
 import { callModel, type ChatMessage } from "./model.js";
-import { executeToolCall } from "./tools.js";
+import { executeToolCalls } from "./tools.js";
 
 const SYSTEM_PROMPT = `You are a coding agent at ${process.cwd()}.
-Use the bash tool to inspect and change the workspace when needed.
+Use tools to solve tasks. Prefer read_file, write_file, and edit_file for file operations.
+Use bash for shell inspection or commands that are awkward as file tools.
 The tool runs commands in Windows PowerShell.
 Act first, then report clearly.`;
 const MAX_AGENT_TURNS = 10;
@@ -12,37 +13,38 @@ type LoopState = {
   turnCount: number;
 };
 
-async function executeToolCalls(
-  toolCalls: NonNullable<Awaited<ReturnType<typeof callModel>>["tool_calls"]>,
-): Promise<ChatMessage[]> {
-  const results: ChatMessage[] = [];
-
-  for (const toolCall of toolCalls) {
-    results.push(await executeToolCall(toolCall));
-  }
-
-  return results;
+function finalText(content: unknown): string {
+  return typeof content === "string" ? content : "";
 }
 
 async function runOneTurn(state: LoopState): Promise<string | null> {
-  const reply = await callModel([
+  const response = await callModel([
     {
       role: "system",
       content: SYSTEM_PROMPT,
     },
     ...state.messages,
   ]);
+  const { message, finishReason } = response;
 
-  state.messages.push(reply);
+  state.messages.push(message);
 
-  if (!reply.tool_calls) {
-    return reply.content ?? "";
+  if (finishReason === "stop") {
+    return finalText(message.content);
   }
 
-  const toolResults = await executeToolCalls(reply.tool_calls);
+  if (finishReason !== "tool_calls") {
+    throw new Error(`Model stopped unexpectedly: ${finishReason}`);
+  }
+
+  if (!message.tool_calls || message.tool_calls.length === 0) {
+    throw new Error("Model finish_reason was tool_calls but no tool calls were returned");
+  }
+
+  const toolResults = await executeToolCalls(message.tool_calls);
 
   if (toolResults.length === 0) {
-    return reply.content ?? "";
+    throw new Error("Model requested tools but no tool results were produced");
   }
 
   state.messages.push(...toolResults);
